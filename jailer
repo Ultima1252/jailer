@@ -1,0 +1,222 @@
+#!/bin/sh
+# Copyright (c) 2016, Ricky Gallamore
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions are met:
+#
+# 1. Redistributions of source code must retain the above copyright notice, this
+#    list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright notice,
+#    this list of conditions and the following disclaimer in the documentation
+#    and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+# WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+# DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+# ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+# (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+# LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+# ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+# The views and conclusions contained in the software and documentation are those
+# of the authors and should not be interpreted as representing official policies,
+# either expressed or implied, of the FreeBSD Project.
+
+JAILER_VERSION="0.0.1"
+
+usage() {
+        cat << EOF
+Usage: jailer [-c default]
+       jailer [-d webserver] [-t default] [-n 192.168.1.120/24]
+       jailer [-u default]
+
+Parameters:
+    -c     --  Create template
+    -d     --  Duplicate template
+    -u     --  Update template, will also update
+               active jails using template
+    -v     --  Show version of jailer
+Options:
+    -n     --  ipv4 address, only used with -d
+    -t     --  Template to duplicate, only used with -d
+    -z     --  zpool to use
+
+By default, (no options) jailer does nothing
+EOF
+        exit 1
+}
+
+CREATE_TEMPLATE="0"
+DUPLICATE=0
+TEMPL="0"
+UPDATE=0
+
+while getopts "c:d:n:t:u:vz:" FLAG; do
+	case "${FLAG}" in
+	c)	CREATE_TEMPLATE="1"
+		TEMPLATE_NAME="${OPTARG}" ;;
+	d)	DUPLICATE="1"
+		DUP_JAIL_NAME="${OPTARG}" ;;
+	n)	IP4="$OPTARG" ;;
+	t)	TEMPL="1"
+		TEMPLATE_NAME="${OPTARG}" ;;
+	u)	UPDATE="1"
+		TEMPLATE_NAME="${OPTARG}" ;;
+	v)	echo "${JAILER_VERSION}" && exit 0 ;;
+        z)	ZPOOL="${OPTARG}" ;;
+	*)	usage && exit 1 ;;
+	esac
+done
+
+[ "$(( ${TEMPL} + ${DUPLICATE} ))" -eq "1" ] && usage
+[ "$(( ${CREATE_TEMPLATE} + ${DUPLICATE} + ${UPDATE} ))" -gt "1" ] && usage
+[ "$#" -lt "1" ] && usage
+
+shift "$((OPTIND-1))"
+
+: ${ZPOOL:="tank"}
+: ${TEMPLATE_NAME:="main"}
+: ${TEMPLATE_DIR:="/usr/jails/template"}
+: ${TEMPLATE_ZFS_DIR:="${ZPOOL}/jails/template"}
+: ${JAIL_DIR:="/usr/jails"}
+: ${JAIL_ZFS_DIR:="${ZPOOL}/jails"}
+: ${TEMPLATE_CURRENT_NAME:="CURRENT"}
+: ${SRCDIR:="/usr/src"}
+: ${DATE:="`date "+%Y-%m-%d_%H.%M.%S"`"}
+
+ZFS_TEMPLATE="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}"
+TEMPLATE="${TEMPLATE_DIR}/${TEMPLATE_NAME}"
+ZFS_SKEL="${ZFS_TEMPLATE}/s"
+SKEL="${TEMPLATE}/s"
+OLD_SNAPSHOT="old"
+
+JAIL_ZFS_BASE="${JAIL_ZFS_DIR}/${DUP_JAIL_NAME}"
+JAIL_ZFS_LOCAL="${JAIL_ZFS_DIR}/${DUP_JAIL_NAME}-local"
+JAIL_DATA="${JAIL_DIR}/${DUP_JAIL_NAME}"
+
+: ${MAKE:="make"}
+: ${MAKE_ARGS:=""}
+
+### Error Checking ###
+precheck() {
+local DATASET_LIST="`zfs list | awk '{ print $1 }'`"
+if [ "$1" -eq "0" ]; then
+	[ "`echo "${DATASET_LIST}" | grep -com1 "^${ZFS_TEMPLATE}$"`" -eq "1" ] && echo "Template ${TEMPLATE_NAME} already exists" && exit 1
+	[ -d "${TEMPLATE}" ] && [ ! "`find "${TEMPLATE}" -type d -empty -maxdepth 1`" ] && echo "Template dir ${TEMPLATE} is not empty" && exit 1
+fi
+if [ "$1" -ge "1" ]; then
+	[ "`echo "${DATASET_LIST}" | grep -com1 "^${ZFS_TEMPLATE}$"`" -ne "1" ] && echo "Template ${ZFS_TEMPLATE} not found, or wrong template name" && exit 1
+	! [ -f "${TEMPLATE}/COPYRIGHT" ] && echo "Verify ${ZFS_TEMPLATE} is a template" && exit 1
+	[ "`zfs get -H mountpoint "${ZFS_TEMPLATE}" | awk '{ print $3 }' | grep -com1 "^${TEMPLATE}$"`" -ne "1" ] && echo "Template not mounted at ${TEMPLATE}" && exit 1
+	[ "`zfs get -H mounted "${ZFS_TEMPLATE}" | awk '{ print $3 }' | grep -com1 "^yes$"`" -ne "1" ] && echo "Template ${ZFS_TEMPLATE} not mounted" && exit 1
+fi
+if [ "$1" -ge "2" ]; then
+	for dataset in "${JAIL_ZFS_BASE}" "${JAIL_ZFS_LOCAL}"; do
+		[ "`echo "${DATASET_LIST}" | grep -com1 "^$dataset$"`" -eq "1" ] && echo "$dataset already exists" && exit 1
+	done
+fi
+}
+
+mk_dir() {
+mkdir -p "$@"
+chflags sunlnk "$@"
+}
+
+mk_link() {
+ln -s "$1" "$2"
+chflags -h sunlnk "$2"
+}
+
+zfs_snapshot() {
+[ "$3" -eq "1" ] && zfs list "$1@$2" >/dev/null 2>&1 && zfs rename "$1@$2" "$1@${OLD_SNAPSHOT}-${DATE}"
+zfs snapshot "$1@$2"
+}
+
+install_src() {
+zfs set mountpoint="${SKEL}" "${ZFS_SKEL}"
+chflags -R 0 "${TEMPLATE}/root" "${SKEL}/root"
+rm "${TEMPLATE}/root"
+cd ${SRCDIR}
+${MAKE} ${MAKE_ARGS} installworld DESTDIR="${TEMPLATE}"
+[ $? -ne 0 ] && echo "${SRCDIR} Needs to be compiled. Run make buildworld." && exit 1
+${MAKE} ${MAKE_ARGS} distribution DESTDIR="${TEMPLATE}"
+${MAKE} ${MAKE_ARGS} delete-old DESTDIR="${TEMPLATE}"
+for file in `find "${TEMPLATE}/root" -type f | grep -o "\..*$"`; do
+	[ -f "${SKEL}/root/$file" ] && rm "${SKEL}/root/$file"
+	mv "${TEMPLATE}/root/$file" "${SKEL}/root/"
+done
+rmdir "${TEMPLATE}/root"
+mk_link "s/root" "${TEMPLATE}/root"
+! [ -f "${SKEL}/etc/resolv.conf" ] && [ -f /etc/resolv.conf ] && cp /etc/resolv.conf "${SKEL}/etc/"
+! [ -f "${SKEL}/etc/rc.conf" ] && printf 'hostname=""\nsendmail_enable="NO"\nsendmail_submit_enable="NO"\nsendmail_outbound_enable="NO"\nsendmail_msp_queue_enable="NO"' > "${SKEL}/etc/rc.conf"
+}
+
+create_template() {
+if [ "${CREATE_TEMPLATE}" -eq "1" ]; then
+	precheck "0"
+	zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${TEMPLATE}" "${ZFS_TEMPLATE}"
+	zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${SKEL}" "${ZFS_SKEL}"
+### Create Links for writable directories ###
+	local SKEL_FOLDERS="etc home media mnt root tmp var"
+	mk_dir "${TEMPLATE}/usr/local" "${TEMPLATE}/s"
+	zfs set mountpoint="${TEMPLATE}/s" "${ZFS_SKEL}"
+	for link in ${SKEL_FOLDERS}; do
+		mk_link "s/$link" "${TEMPLATE}/$link"
+	done
+	mk_link "../s/home" "${TEMPLATE}/usr/home"
+	for dir in ${SKEL_FOLDERS}; do
+		mk_dir "${TEMPLATE}/s/$dir"
+	done
+	install_src
+	zfs set readonly=on "${ZFS_TEMPLATE}"
+	zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "0"
+	zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "0"
+	echo "${TEMPLATE_NAME} is ready for use."
+fi
+}
+
+update() {
+precheck "1"
+zfs set readonly=off "${ZFS_TEMPLATE}"
+install_src
+zfs set readonly=on "${ZFS_TEMPLATE}"
+zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "1"
+zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "1"
+
+### Updating jails that are currently running ###
+: ${JAILS:="`cat /etc/jail.conf | grep -v '${' | sed 's/#.*//' | grep -E ".+{" | sed 's/{//'`"}
+for jail in ${JAILS};
+do
+	if [ "`mount | grep "${JAIL_DIR}/$jail" | grep -o "^${TEMPLATE}"`" == "${TEMPLATE}" ]; then
+		cd ${SRCDIR}
+		zfs_snapshot "${JAIL_ZFS_DIR}/$jail" "${OLD_SNAPSHOT}-${DATE}" "0"
+		zfs_snapshot "${JAIL_ZFS_DIR}/$jail-local" "${OLD_SNAPSHOT}-${DATE}" "0"
+		mergemaster -t "${JAIL_DIR}/$jail"/var/tmp/temproot -D "${JAIL_DIR}/$jail" -i -F
+	else
+		FAILED="${FAILED} $jail"
+	fi
+done
+
+[ -n "${FAILED}" ] && printf "The following jails failed to update due to incorrect mountpoint, or do not belong to this template... ${FAILED}\n"
+echo "Update Finished"
+}
+
+duplicate() {
+precheck "2"
+mk_dir "${JAIL_DATA}"
+zfs create -o compression=lz4 -o canmount=noauto -o mountpoint="${JAIL_DATA}" "${JAIL_ZFS_BASE}"
+zfs create -o compression=lz4 -o canmount=noauto "${JAIL_ZFS_LOCAL}"
+mount -t zfs "${JAIL_ZFS_BASE}" "${JAIL_DATA}"
+cp -Ra "${SKEL}"/* "${JAIL_DATA}/"
+umount "${JAIL_DATA}"
+printf "${TEMPLATE} ${JAIL_DATA}\tnullfs\tro 0 0\n${JAIL_ZFS_BASE} ${JAIL_DATA}/s\tzfs\trw 0 0\n${JAIL_ZFS_LOCAL} ${JAIL_DATA}/usr/local\tzfs\trw 0 0" > /etc/fstab."${DUP_JAIL_NAME}"
+printf "\n${DUP_JAIL_NAME} {\n ip4.addr = \"${IP4}\";\n}" >> /etc/jail.conf
+}
+
+[ "${CREATE_TEMPLATE}" -eq "1" ] && create_template
+[ "${UPDATE}" -eq "1" ] && update
+[ "${DUPLICATE}" -eq "1" ] && duplicate
