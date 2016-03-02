@@ -171,7 +171,7 @@ if [ "${CREATE_TEMPLATE}" -eq "1" ]; then
 	for dir in ${SKEL_FOLDERS}; do
 		mk_dir "${TEMPLATE}/s/$dir"
 	done
-	chmod 1777 ${TEMPLATE}/s/tmp
+	chmod 1777 "${TEMPLATE}/s/tmp"
 	install_src
 	zfs set readonly=on "${ZFS_TEMPLATE}"
 	zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "0"
