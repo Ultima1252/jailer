@@ -42,6 +42,8 @@ Parameters:
     -v     --  Show version of jailer
 Options:
     -n     --  ipv4 address, only used with -d
+    -o     --  set OBJDIR
+    -s     --  set SRCDIR
     -t     --  Template to duplicate, only used with -d
     -z     --  zpool to use
 
@@ -55,13 +57,15 @@ DUPLICATE=0
 TEMPL="0"
 UPDATE=0
 
-while getopts "c:d:n:t:u:vz:" FLAG; do
+while getopts "c:d:n:o:s:t:u:vz:" FLAG; do
 	case "${FLAG}" in
 	c)	CREATE_TEMPLATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	d)	DUPLICATE="1"
 		DUP_JAIL_NAME="${OPTARG}" ;;
 	n)	IP4="$OPTARG" ;;
+	o)	OBJDIR="${OPTARG}" ;;
+	s)	SRCDIR="${OPTARG}" ;;
 	t)	TEMPL="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	u)	UPDATE="1"
@@ -78,7 +82,7 @@ done
 
 shift "$((OPTIND-1))"
 
-: ${ZPOOL:="tank"}
+: ${ZPOOL:="zroot"}
 : ${TEMPLATE_NAME:="main"}
 : ${TEMPLATE_DIR:="/usr/jails/template"}
 : ${TEMPLATE_ZFS_DIR:="${ZPOOL}/jails/template"}
@@ -86,6 +90,7 @@ shift "$((OPTIND-1))"
 : ${JAIL_ZFS_DIR:="${ZPOOL}/jails"}
 : ${TEMPLATE_CURRENT_NAME:="CURRENT"}
 : ${SRCDIR:="/usr/src"}
+: ${OBJDIR:="/usr/obj"}
 : ${DATE:="`date "+%Y-%m-%d_%H.%M.%S"`"}
 
 ZFS_TEMPLATE="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}"
@@ -141,10 +146,10 @@ zfs set mountpoint="${SKEL}" "${ZFS_SKEL}"
 chflags -R 0 "${TEMPLATE}/root" "${SKEL}/root"
 rm "${TEMPLATE}/root"
 cd ${SRCDIR}
-${MAKE} ${MAKE_ARGS} installworld DESTDIR="${TEMPLATE}"
+env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} installworld DESTDIR="${TEMPLATE}"
 [ $? -ne 0 ] && echo "${SRCDIR} Needs to be compiled. Run make buildworld." && exit 1
-${MAKE} ${MAKE_ARGS} distribution DESTDIR="${TEMPLATE}"
-${MAKE} ${MAKE_ARGS} delete-old DESTDIR="${TEMPLATE}"
+env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} distribution DESTDIR="${TEMPLATE}"
+env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} delete-old DESTDIR="${TEMPLATE}"
 for file in `find "${TEMPLATE}/root" -type f | grep -o "\..*$"`; do
 	[ -f "${SKEL}/root/$file" ] && rm "${SKEL}/root/$file"
 	mv "${TEMPLATE}/root/$file" "${SKEL}/root/"
@@ -196,7 +201,7 @@ do
 		cd ${SRCDIR}
 		zfs_snapshot "${JAIL_ZFS_DIR}/$jail" "${OLD_SNAPSHOT}-${DATE}" "0"
 		zfs_snapshot "${JAIL_ZFS_DIR}/$jail-local" "${OLD_SNAPSHOT}-${DATE}" "0"
-		mergemaster -t "${JAIL_DIR}/$jail"/var/tmp/temproot -D "${JAIL_DIR}/$jail" -i -F
+		env MAKEOBJDIRPREFIX="${OBJDIR}" mergemaster -t "${JAIL_DIR}/$jail"/var/tmp/temproot -D "${JAIL_DIR}/$jail" -m "${SRCDIR}" -i -F
 	else
 		FAILED="${FAILED} $jail"
 	fi
