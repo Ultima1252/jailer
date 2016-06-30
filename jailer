@@ -30,9 +30,9 @@ JAILER_VERSION="0.0.1"
 
 usage() {
         cat << EOF
-Usage: jailer [-c default]
+Usage: jailer [-c default] [-a amd64.amd64]
        jailer [-d webserver] [-t default] [-n 192.168.1.120/24]
-       jailer [-u default]
+       jailer [-u default] [-a amd64.amd64]
 
 Parameters:
     -c     --  Create template
@@ -41,6 +41,7 @@ Parameters:
                active jails using template
     -v     --  Show version of jailer
 Options:
+    -a     --  set TARGET.TARGET_ARCH, default uname -m/-p
     -n     --  ipv4 address, only used with -d
     -o     --  set OBJDIR
     -s     --  set SRCDIR
@@ -57,8 +58,9 @@ DUPLICATE=0
 TEMPL="0"
 UPDATE=0
 
-while getopts "c:d:n:o:s:t:u:vz:" FLAG; do
+while getopts "a:c:d:n:o:s:t:u:vz:" FLAG; do
 	case "${FLAG}" in
+	a)	TARGET="${OPTARG}" ;;
 	c)	CREATE_TEMPLATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	d)	DUPLICATE="1"
@@ -82,6 +84,11 @@ done
 
 shift "$((OPTIND-1))"
 
+if [ -n "${TARGET}" ]; then
+	TARGET_ARCH="`echo ${TARGET} | awk -F. '{print $2}'`"
+	TARGET="`echo ${TARGET} | awk -F. '{print $1}'`"
+fi
+
 : ${ZPOOL:="zroot"}
 : ${TEMPLATE_NAME:="main"}
 : ${TEMPLATE_DIR:="/usr/jails/template"}
@@ -89,6 +96,8 @@ shift "$((OPTIND-1))"
 : ${JAIL_DIR:="/usr/jails"}
 : ${JAIL_ZFS_DIR:="${ZPOOL}/jails"}
 : ${TEMPLATE_CURRENT_NAME:="CURRENT"}
+: ${TARGET:="`uname -m`"}
+: ${TARGET_ARCH:="`uname -p`"}
 : ${SRCDIR:="/usr/src"}
 : ${OBJDIR:="/usr/obj"}
 : ${DATE:="`date "+%Y-%m-%d_%H.%M.%S"`"}
@@ -107,8 +116,18 @@ JAIL_DATA="${JAIL_DIR}/${DUP_JAIL_NAME}"
 : ${MAKE_ARGS:=""}
 
 ### Error Checking ###
+case "${TARGET}.${TARGET_ARCH}" in
+	amd64.amd64);; arm.arm);; arm.armeb);; arm.armv6);; arm64.aarch64);; i386.i386);;
+	mips.mipsel);; mips.mips);; mips.mips64el);; mips.mips64);; mips.mipsn32);;
+	pc98.i386);; powerpc.powerpc);; powerpc.powerpc64);; sparc64.sparc64);;
+        *) echo "${TARGET}.${TARGET_ARCH} is not a valid" && exit 1 ;;
+esac
+
 precheck() {
 local DATASET_LIST="`zfs list | awk '{ print $1 }'`"
+if [ "$1" -lt "2" ]; then
+	[ "`head -5 "${SRCDIR}/README" 2>/dev/null | grep -com1 'FreeBSD source directory'`" -ne "1" ] && echo "Incorrect Source Directory, try setting it? (-s)" && exit 1
+fi
 if [ "$1" -eq "0" ]; then
 	[ "`echo "${DATASET_LIST}" | grep -com1 "^${ZFS_TEMPLATE}$"`" -eq "1" ] && echo "Template ${TEMPLATE_NAME} already exists" && exit 1
 	[ -d "${TEMPLATE}" ] && [ ! "`find "${TEMPLATE}" -type d -empty -maxdepth 1`" ] && echo "Template dir ${TEMPLATE} is not empty" && exit 1
@@ -146,10 +165,10 @@ zfs set mountpoint="${SKEL}" "${ZFS_SKEL}"
 chflags -R 0 "${TEMPLATE}/root" "${SKEL}/root"
 rm "${TEMPLATE}/root"
 cd ${SRCDIR}
-env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} installworld DESTDIR="${TEMPLATE}"
-[ $? -ne 0 ] && echo "${SRCDIR} Needs to be compiled. Run make buildworld." && exit 1
-env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} distribution DESTDIR="${TEMPLATE}"
-env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} delete-old DESTDIR="${TEMPLATE}"
+env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} installworld DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
+[ "$?" -ne "0" ] && return 1
+env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} distribution DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
+env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} delete-old DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
 for file in `find "${TEMPLATE}/root" -type f | grep -o "\..*$"`; do
 	[ -f "${SKEL}/root/$file" ] && rm "${SKEL}/root/$file"
 	mv "${TEMPLATE}/root/$file" "${SKEL}/root/"
@@ -158,6 +177,7 @@ rmdir "${TEMPLATE}/root"
 mk_link "s/root" "${TEMPLATE}/root"
 ! [ -f "${SKEL}/etc/resolv.conf" ] && [ -f /etc/resolv.conf ] && cp /etc/resolv.conf "${SKEL}/etc/"
 ! [ -f "${SKEL}/etc/rc.conf" ] && printf 'hostname=""\nsendmail_enable="NO"\nsendmail_submit_enable="NO"\nsendmail_outbound_enable="NO"\nsendmail_msp_queue_enable="NO"' > "${SKEL}/etc/rc.conf"
+return 0
 }
 
 create_template() {
@@ -178,6 +198,13 @@ if [ "${CREATE_TEMPLATE}" -eq "1" ]; then
 	done
 	chmod 1777 "${TEMPLATE}/s/tmp"
 	install_src
+	if [ "$?" -eq "1" ]; then
+		zfs destroy "${ZFS_SKEL}"
+		zfs destroy "${ZFS_TEMPLATE}"
+		rmdir "${TEMPLATE}"
+		echo "${SRCDIR} Needs to be compiled. Run make buildworld."
+		exit 1
+	fi
 	zfs set readonly=on "${ZFS_TEMPLATE}"
 	zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "0"
 	zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "0"
@@ -189,6 +216,11 @@ update() {
 precheck "1"
 zfs set readonly=off "${ZFS_TEMPLATE}"
 install_src
+if [ "$?" -eq "1" ]; then
+	zfs set readonly=on "${ZFS_TEMPLATE}"
+	echo "${SRCDIR} Needs to be compiled. Run make buildworld."
+	exit 1
+fi
 zfs set readonly=on "${ZFS_TEMPLATE}"
 zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "1"
 zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "1"
@@ -201,7 +233,7 @@ do
 		cd ${SRCDIR}
 		zfs_snapshot "${JAIL_ZFS_DIR}/$jail" "${OLD_SNAPSHOT}-${DATE}" "0"
 		zfs_snapshot "${JAIL_ZFS_DIR}/$jail-local" "${OLD_SNAPSHOT}-${DATE}" "0"
-		env MAKEOBJDIRPREFIX="${OBJDIR}" mergemaster -t "${JAIL_DIR}/$jail"/var/tmp/temproot -D "${JAIL_DIR}/$jail" -m "${SRCDIR}" -i -F
+		env MAKEOBJDIRPREFIX="${OBJDIR}" mergemaster -A "${TARGET_ARCH}" -t "${JAIL_DIR}/$jail"/var/tmp/temproot -D "${JAIL_DIR}/$jail" -m "${SRCDIR}" -i -F 
 	else
 		FAILED="${FAILED} $jail"
 	fi
