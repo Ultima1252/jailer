@@ -181,38 +181,36 @@ return 0
 }
 
 create_template() {
-if [ "${CREATE_TEMPLATE}" -eq "1" ]; then
-	: ${TARGET:="`uname -m`"}
-	: ${TARGET_ARCH:="`uname -p`"}
-	archcheck
-	precheck "0"
-	zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${TEMPLATE}" "${ZFS_TEMPLATE}"
-	zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${SKEL}" "${ZFS_SKEL}"
+: ${TARGET:="`uname -m`"}
+: ${TARGET_ARCH:="`uname -p`"}
+archcheck
+precheck "0"
+zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${TEMPLATE}" "${ZFS_TEMPLATE}"
+zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${SKEL}" "${ZFS_SKEL}"
 ### Create Links for writable directories ###
-	local SKEL_FOLDERS="etc home media mnt root tmp var"
-	mk_dir "${TEMPLATE}/usr/local" "${TEMPLATE}/s"
-	zfs set mountpoint="${TEMPLATE}/s" "${ZFS_SKEL}"
-	for link in ${SKEL_FOLDERS}; do
-		mk_link "s/$link" "${TEMPLATE}/$link"
-	done
-	mk_link "../s/home" "${TEMPLATE}/usr/home"
-	for dir in ${SKEL_FOLDERS}; do
-		mk_dir "${TEMPLATE}/s/$dir"
-	done
-	chmod 1777 "${TEMPLATE}/s/tmp"
-	install_src
-	if [ "$?" -eq "1" ]; then
-		zfs destroy "${ZFS_SKEL}"
-		zfs destroy "${ZFS_TEMPLATE}"
-		rmdir "${TEMPLATE}"
-		echo "${SRCDIR} Needs to be compiled. Run make buildworld."
-		exit 1
-	fi
-	zfs set readonly=on "${ZFS_TEMPLATE}"
-	zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "0"
-	zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "0"
-	echo "${TEMPLATE_NAME} is ready for use."
+local SKEL_FOLDERS="etc home media mnt root tmp var"
+mk_dir "${TEMPLATE}/usr/local" "${TEMPLATE}/s"
+zfs set mountpoint="${TEMPLATE}/s" "${ZFS_SKEL}"
+for link in ${SKEL_FOLDERS}; do
+	mk_link "s/$link" "${TEMPLATE}/$link"
+done
+mk_link "../s/home" "${TEMPLATE}/usr/home"
+for dir in ${SKEL_FOLDERS}; do
+	mk_dir "${TEMPLATE}/s/$dir"
+done
+chmod 1777 "${TEMPLATE}/s/tmp"
+install_src
+if [ "$?" -eq "1" ]; then
+	zfs destroy "${ZFS_SKEL}"
+	zfs destroy "${ZFS_TEMPLATE}"
+	rmdir "${TEMPLATE}"
+	echo "${SRCDIR} Needs to be compiled. Run make buildworld."
+	exit 1
 fi
+zfs set readonly=on "${ZFS_TEMPLATE}"
+zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "0"
+zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "0"
+echo "${TEMPLATE_NAME} is ready for use."
 }
 
 update() {
