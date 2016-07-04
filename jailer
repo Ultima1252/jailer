@@ -232,9 +232,8 @@ zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "1"
 zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "1"
 
 ### Updating jails that are currently running ###
-: ${JAILS:="`cat /etc/jail.conf | grep -v '${' | sed 's/#.*//' | grep -E ".+{" | sed 's/{//'`"}
-for jail in ${JAILS};
-do
+: ${JAILS:="`cat /etc/jail.conf | grep -v '${' | sed 's/#.*//' | grep -E ".+{" | sed 's/{//' | sort -u`"}
+for jail in ${JAILS}; do
 	if [ "`mount | grep "${JAIL_DIR}/$jail" | grep -o "^${TEMPLATE}"`" == "${TEMPLATE}" ]; then
 		cd ${SRCDIR}
 		zfs_snapshot "${JAIL_ZFS_DIR}/$jail" "${OLD_SNAPSHOT}-${DATE}" "0"
