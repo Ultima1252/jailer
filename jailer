@@ -32,7 +32,7 @@ usage() {
         cat << EOF
 Usage: jailer [-c default] [-a amd64.amd64]
        jailer [-d webserver] [-t default] [-n 192.168.1.120/24]
-       jailer [-u default] [-a amd64.amd64]
+       jailer [-u default]
 
 Parameters:
     -c     --  Create template
@@ -96,8 +96,6 @@ fi
 : ${JAIL_DIR:="/usr/jails"}
 : ${JAIL_ZFS_DIR:="${ZPOOL}/jails"}
 : ${TEMPLATE_CURRENT_NAME:="CURRENT"}
-: ${TARGET:="`uname -m`"}
-: ${TARGET_ARCH:="`uname -p`"}
 : ${SRCDIR:="/usr/src"}
 : ${OBJDIR:="/usr/obj"}
 : ${DATE:="`date "+%Y-%m-%d_%H.%M.%S"`"}
@@ -116,12 +114,14 @@ JAIL_DATA="${JAIL_DIR}/${DUP_JAIL_NAME}"
 : ${MAKE_ARGS:=""}
 
 ### Error Checking ###
+archcheck() {
 case "${TARGET}.${TARGET_ARCH}" in
 	amd64.amd64);; arm.arm);; arm.armeb);; arm.armv6);; arm64.aarch64);; i386.i386);;
 	mips.mipsel);; mips.mips);; mips.mips64el);; mips.mips64);; mips.mipsn32);;
 	pc98.i386);; powerpc.powerpc);; powerpc.powerpc64);; sparc64.sparc64);;
         *) echo "${TARGET}.${TARGET_ARCH} is not a valid" && exit 1 ;;
 esac
+}
 
 precheck() {
 local DATASET_LIST="`zfs list | awk '{ print $1 }'`"
@@ -168,7 +168,7 @@ cd ${SRCDIR}
 env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} installworld DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
 [ "$?" -ne "0" ] && return 1
 env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} distribution DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
-env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} delete-old DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
+[ "${CREATE_TEMPLATE}" -ne "1" ] && env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} delete-old DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
 for file in `find "${TEMPLATE}/root" -type f | grep -o "\..*$"`; do
 	[ -f "${SKEL}/root/$file" ] && rm "${SKEL}/root/$file"
 	mv "${TEMPLATE}/root/$file" "${SKEL}/root/"
@@ -182,6 +182,9 @@ return 0
 
 create_template() {
 if [ "${CREATE_TEMPLATE}" -eq "1" ]; then
+	: ${TARGET:="`uname -m`"}
+	: ${TARGET_ARCH:="`uname -p`"}
+	archcheck
 	precheck "0"
 	zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${TEMPLATE}" "${ZFS_TEMPLATE}"
 	zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${SKEL}" "${ZFS_SKEL}"
@@ -213,6 +216,9 @@ fi
 }
 
 update() {
+TARGET="`chroot "${TEMPLATE}" uname -m`"
+TARGET_ARCH="`chroot "${TEMPLATE}" uname -p`"
+archcheck
 precheck "1"
 zfs set readonly=off "${ZFS_TEMPLATE}"
 install_src
