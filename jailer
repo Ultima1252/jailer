@@ -79,10 +79,12 @@ while getopts "a:c:d:n:o:s:t:u:vz:" FLAG; do
 done
 
 [ "$(( ${TEMPL} + ${DUPLICATE} ))" -eq "1" ] && usage
-[ "$(( ${CREATE_TEMPLATE} + ${DUPLICATE} + ${UPDATE} ))" -gt "1" ] && usage
-[ "$#" -lt "1" ] && usage
+[ "$(( ${CREATE_TEMPLATE} + ${DUPLICATE} + ${UPDATE} ))" -ne "1" ] && usage
+[ "$#" -eq "0" ] && usage
 
 shift "$((OPTIND-1))"
+
+! [ "$#" -eq "0" ] && usage
 
 if [ -n "${TARGET}" ]; then
 	TARGET_ARCH="`echo ${TARGET} | awk -F. '{print $2}'`"
