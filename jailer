@@ -170,7 +170,7 @@ cd ${SRCDIR}
 env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} installworld DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
 [ "$?" -ne "0" ] && return 1
 env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} distribution DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
-[ "${CREATE_TEMPLATE}" -ne "1" ] && env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} delete-old DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
+[ "${CREATE_TEMPLATE}" -ne "1" ] && env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} -DBATCH_DELETE_OLD_FILES delete-old DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}" && env MAKEOBJDIRPREFIX="${OBJDIR}" ${MAKE} ${MAKE_ARGS} -DBATCH_DELETE_OLD_FILES delete-old-libs DESTDIR="${TEMPLATE}" TARGET="${TARGET}" TARGET_ARCH="${TARGET_ARCH}"
 for file in `find "${TEMPLATE}/root" -type f | grep -o "\..*$"`; do
 	[ -f "${SKEL}/root/$file" ] && rm "${SKEL}/root/$file"
 	mv "${TEMPLATE}/root/$file" "${SKEL}/root/"
