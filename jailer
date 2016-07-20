@@ -31,7 +31,7 @@ JAILER_VERSION="0.0.2"
 usage() {
         cat << EOF
 Usage: jailer [-c default] [-a amd64.amd64]
-       jailer [-d webserver] [-t default] [-n 192.168.1.120/24]
+       jailer [-d default] [-j webserver] [-n 192.168.1.120/24]
        jailer [-u default]
 
 Parameters:
@@ -45,7 +45,7 @@ Options:
     -n     --  ipv4 address, only used with -d
     -o     --  set OBJDIR
     -s     --  set SRCDIR
-    -t     --  Template to duplicate, only used with -d
+    -j     --  jailname, only used with -d
     -z     --  zpool to use
 
 By default, (no options) jailer does nothing
@@ -58,18 +58,18 @@ DUPLICATE=0
 TEMPL="0"
 UPDATE=0
 
-while getopts "a:c:d:n:o:s:t:u:vz:" FLAG; do
+while getopts "a:c:d:j:n:o:s:u:vz:" FLAG; do
 	case "${FLAG}" in
 	a)	TARGET="${OPTARG}" ;;
 	c)	CREATE_TEMPLATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	d)	DUPLICATE="1"
-		DUP_JAIL_NAME="${OPTARG}" ;;
+		TEMPLATE_NAME="${OPTARG}" ;;
 	n)	IP4="$OPTARG" ;;
 	o)	OBJDIR="${OPTARG}" ;;
 	s)	SRCDIR="${OPTARG}" ;;
-	t)	TEMPL="1"
-		TEMPLATE_NAME="${OPTARG}" ;;
+	j)	TEMPL="1"
+		DUP_JAIL_NAME="${OPTARG}" ;;
 	u)	UPDATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	v)	echo "${JAILER_VERSION}" && exit 0 ;;
