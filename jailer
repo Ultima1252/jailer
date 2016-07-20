@@ -163,7 +163,6 @@ zfs snapshot "$1@$2"
 }
 
 install_src() {
-zfs set mountpoint="${SKEL}" "${ZFS_SKEL}"
 chflags -R 0 "${TEMPLATE}/root" "${SKEL}/root"
 rm "${TEMPLATE}/root"
 cd ${SRCDIR}
@@ -187,12 +186,17 @@ create_template() {
 : ${TARGET_ARCH:="`uname -p`"}
 archcheck
 precheck "0"
-zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${TEMPLATE}" "${ZFS_TEMPLATE}"
-zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${SKEL}" "${ZFS_SKEL}"
+zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${JAIL_DIR}" ${ZPOOL}/jails
+if [ "`zfs get -H mounted ${ZPOOL}/jails | grep -com1 "yes"`" -eq "1" ]; then
+	zfs create -p -o compression=lz4 -o atime=off "${ZFS_TEMPLATE}"
+	zfs create -p -o compression=lz4 -o atime=off "${ZFS_SKEL}"
+else
+	zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${TEMPLATE}" "${ZFS_TEMPLATE}"
+	zfs create -p -o compression=lz4 -o atime=off -o mountpoint="${SKEL}" "${ZFS_SKEL}"
+fi
 ### Create Links for writable directories ###
 local SKEL_FOLDERS="etc home media mnt root tmp var"
 mk_dir "${TEMPLATE}/usr/local" "${TEMPLATE}/s"
-zfs set mountpoint="${TEMPLATE}/s" "${ZFS_SKEL}"
 for link in ${SKEL_FOLDERS}; do
 	mk_link "s/$link" "${TEMPLATE}/$link"
 done
