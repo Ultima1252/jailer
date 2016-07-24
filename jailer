@@ -109,13 +109,15 @@ esac
 : ${JAIL_DIR:="/usr/jails"}
 : ${JAIL_ZFS_DIR:="${ZPOOL}/jails"}
 : ${TEMPLATE_SNAPSHOT_THIN:="CURRENT"}
-: ${TEMPLATE_SNAPSHOT_FULL:="FULL"}
+: ${TEMPLATE_SNAPSHOT_FULL:="CURRENT-FULL"}
 : ${SRCDIR:="/usr/src"}
 : ${OBJDIR:="/usr/obj"}
 : ${DATE:="`date "+%Y-%m-%d_%H.%M.%S"`"}
 
 ZFS_TEMPLATE="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}"
+ZFS_TEMPLATE_FULL="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}-FULL"
 TEMPLATE="${TEMPLATE_DIR}/${TEMPLATE_NAME}"
+TEMPLATE_FULL="${TEMPLATE_DIR}/${TEMPLATE_NAME}-FULL"
 ZFS_SKEL="${ZFS_TEMPLATE}/s"
 SKEL="${TEMPLATE}/s"
 OLD_SNAPSHOT="old"
@@ -169,6 +171,11 @@ ln -s "$1" "$2"
 chflags -h sunlnk "$2"
 }
 
+rm_link() {
+chflags -h 0 "$1"
+rm "$1"
+}
+
 zfs_snapshot() {
 [ "$3" -eq "1" ] && zfs list "$1@$2" >/dev/null 2>&1 && zfs rename "$1@$2" "$1@${OLD_SNAPSHOT}-${DATE}"
 zfs snapshot "$1@$2"
@@ -191,6 +198,26 @@ mk_link "s/root" "${TEMPLATE}/root"
 ! [ -f "${SKEL}/etc/resolv.conf" ] && [ -f /etc/resolv.conf ] && cp /etc/resolv.conf "${SKEL}/etc/"
 ! [ -f "${SKEL}/etc/rc.conf" ] && printf 'hostname=""\nsendmail_enable="NO"\nsendmail_submit_enable="NO"\nsendmail_outbound_enable="NO"\nsendmail_msp_queue_enable="NO"' > "${SKEL}/etc/rc.conf"
 return 0
+}
+
+create_template_full() {
+local SKEL_FOLDERS="etc media mnt root tmp var"
+zfs clone "${ZFS_TEMPLATE}@${TEMPLATE_SNAPSHOT_THIN}" "${ZFS_TEMPLATE_FULL}"
+rmdir ${TEMPLATE_FULL}/s
+for link in ${SKEL_FOLDERS} home usr/home; do
+	rm_link "${TEMPLATE_FULL}/$link"
+done
+ln -s usr/home ${TEMPLATE_FULL}/home
+mkdir -p ${TEMPLATE_FULL}/usr/home
+for dir in ${SKEL_FOLDERS}; do
+	cp -Ra "${SKEL}/$dir" "${TEMPLATE_FULL}/$dir"
+done
+chmod 1777 "${TEMPLATE_FULL}/tmp"
+zfs set canmount=noauto "${ZFS_TEMPLATE_FULL}"
+zfs set readonly=on "${ZFS_TEMPLATE_FULL}"
+zfs umount "${ZFS_TEMPLATE_FULL}"
+rmdir "${TEMPLATE_FULL}"
+zfs_snapshot "${ZFS_TEMPLATE_FULL}" "${TEMPLATE_SNAPSHOT_FULL}" "0"
 }
 
 create_template() {
@@ -228,6 +255,7 @@ fi
 zfs set readonly=on "${ZFS_TEMPLATE}"
 zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_SNAPSHOT_THIN}" "0"
 zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_SNAPSHOT_THIN}" "0"
+create_template_full
 echo "${TEMPLATE_NAME} is ready for use."
 }
 
