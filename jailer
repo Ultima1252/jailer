@@ -146,6 +146,7 @@ if [ "$1" -lt "2" ]; then
 fi
 if [ "$1" -eq "0" ]; then
 	[ "`echo "${DATASET_LIST}" | grep -com1 "^${ZFS_TEMPLATE}$"`" -eq "1" ] && echo "Template ${TEMPLATE_NAME} already exists" && exit 1
+	[ "`echo "${DATASET_LIST}" | grep -com1 "^${ZFS_TEMPLATE_FULL}$"`" -eq "1" ] && echo "Dataset ${TEMPLATE_NAME_FULL} already exists, and is needed for full jails" && exit 1
 	[ -d "${TEMPLATE}" ] && [ ! "`find "${TEMPLATE}" -type d -empty -maxdepth 1`" ] && echo "Template dir ${TEMPLATE} is not empty" && exit 1
 fi
 if [ "$1" -ge "1" ]; then
@@ -260,10 +261,10 @@ echo "${TEMPLATE_NAME} is ready for use."
 }
 
 update() {
+precheck "1"
 TARGET="`chroot "${TEMPLATE}" uname -m`"
 TARGET_ARCH="`chroot "${TEMPLATE}" uname -p`"
 archcheck
-precheck "1"
 zfs set readonly=off "${ZFS_TEMPLATE}"
 install_src
 if [ "$?" -eq "1" ]; then
