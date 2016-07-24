@@ -116,6 +116,7 @@ esac
 
 ZFS_TEMPLATE="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}"
 ZFS_TEMPLATE_FULL="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}-FULL"
+ZFS_TEMPLATE_FULL_OLD="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}-FULL-OLD-${DATE}"
 TEMPLATE="${TEMPLATE_DIR}/${TEMPLATE_NAME}"
 TEMPLATE_FULL="${TEMPLATE_DIR}/${TEMPLATE_NAME}-FULL"
 ZFS_SKEL="${ZFS_TEMPLATE}/s"
@@ -275,6 +276,15 @@ fi
 zfs set readonly=on "${ZFS_TEMPLATE}"
 zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_SNAPSHOT_THIN}" "1"
 zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_SNAPSHOT_THIN}" "1"
+zfs list "${ZFS_TEMPLATE_FULL}" >/dev/null 2>&1
+if [ "$?" -eq "0" ]; then
+	if [ "`zfs list -ro origin "${JAIL_ZFS_DIR}" | grep -cm1 "^${ZFS_TEMPLATE_FULL}@.*$"`" -eq "1" ]; then
+		zfs rename -u "${ZFS_TEMPLATE_FULL}" "${ZFS_TEMPLATE_FULL_OLD}"
+	else
+		zfs destroy -r "${ZFS_TEMPLATE_FULL}"
+	fi
+fi
+create_template_full
 
 ### Updating jails that are currently running ###
 : ${JAILS:="`cat /etc/jail.conf | grep -v '${' | sed 's/#.*//' | grep -E ".+{" | sed 's/{//' | sort -u`"}
