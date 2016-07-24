@@ -31,7 +31,7 @@ JAILER_VERSION="0.0.3"
 usage() {
         cat << EOF
 Usage: jailer [-c default] [-a amd64.amd64]
-       jailer [-d default] [-j webserver] [-n 192.168.1.120/24]
+       jailer [-d default] [-j webserver] [-t full] [-n 192.168.1.120/24]
        jailer [-u default]
 
 Parameters:
@@ -42,10 +42,13 @@ Parameters:
     -v     --  Show version of jailer
 Options:
     -a     --  set TARGET.TARGET_ARCH, default uname -m/-p
+    -j     --  jailname, only used with -d
     -n     --  ipv4 address, only used with -d
     -o     --  set OBJDIR
     -s     --  set SRCDIR
-    -j     --  jailname, only used with -d
+    -t     --  jail type, only used with -d
+               valid types are thin and full/thick
+               default is thin
     -z     --  zpool to use
 
 By default, (no options) jailer does nothing
@@ -56,20 +59,22 @@ EOF
 CREATE_TEMPLATE="0"
 DUPLICATE=0
 TEMPL="0"
-UPDATE=0
+UPDATE="0"
+DUP_TYPE="0"
 
-while getopts "a:c:d:j:n:o:s:u:vz:" FLAG; do
+while getopts "a:c:d:j:n:o:s:t:u:vz:" FLAG; do
 	case "${FLAG}" in
 	a)	TARGET="${OPTARG}" ;;
 	c)	CREATE_TEMPLATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	d)	DUPLICATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
+	j)	TEMPL="1"
+		DUP_JAIL_NAME="${OPTARG}" ;;
 	n)	IP4="$OPTARG" ;;
 	o)	OBJDIR="${OPTARG}" ;;
 	s)	SRCDIR="${OPTARG}" ;;
-	j)	TEMPL="1"
-		DUP_JAIL_NAME="${OPTARG}" ;;
+	t)	DUP_TYPE="${OPTARG}" ;;
 	u)	UPDATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	v)	echo "${JAILER_VERSION}" && exit 0 ;;
@@ -91,13 +96,20 @@ if [ -n "${TARGET}" ]; then
 	TARGET="`echo ${TARGET} | awk -F. '{print $1}'`"
 fi
 
+case "${DUP_TYPE}" in
+	0|thin) DUP_TYPE="0" ;;
+	full|thick) DUP_TYPE="1" ;;
+	*) echo Invalid -t option && exit 1
+esac
+
 : ${ZPOOL:="zroot"}
 : ${TEMPLATE_NAME:="main"}
 : ${TEMPLATE_DIR:="/usr/jails/template"}
 : ${TEMPLATE_ZFS_DIR:="${ZPOOL}/jails/template"}
 : ${JAIL_DIR:="/usr/jails"}
 : ${JAIL_ZFS_DIR:="${ZPOOL}/jails"}
-: ${TEMPLATE_CURRENT_NAME:="CURRENT"}
+: ${TEMPLATE_SNAPSHOT_THIN:="CURRENT"}
+: ${TEMPLATE_SNAPSHOT_FULL:="FULL"}
 : ${SRCDIR:="/usr/src"}
 : ${OBJDIR:="/usr/obj"}
 : ${DATE:="`date "+%Y-%m-%d_%H.%M.%S"`"}
@@ -214,8 +226,8 @@ if [ "$?" -eq "1" ]; then
 	exit 1
 fi
 zfs set readonly=on "${ZFS_TEMPLATE}"
-zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "0"
-zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "0"
+zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_SNAPSHOT_THIN}" "0"
+zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_SNAPSHOT_THIN}" "0"
 echo "${TEMPLATE_NAME} is ready for use."
 }
 
@@ -232,8 +244,8 @@ if [ "$?" -eq "1" ]; then
 	exit 1
 fi
 zfs set readonly=on "${ZFS_TEMPLATE}"
-zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "1"
-zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "1"
+zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_SNAPSHOT_THIN}" "1"
+zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_SNAPSHOT_THIN}" "1"
 
 ### Updating jails that are currently running ###
 : ${JAILS:="`cat /etc/jail.conf | grep -v '${' | sed 's/#.*//' | grep -E ".+{" | sed 's/{//' | sort -u`"}
@@ -252,7 +264,7 @@ done
 echo "Update Finished"
 }
 
-duplicate() {
+duplicate_thin() {
 precheck "2"
 mk_dir "${JAIL_DATA}"
 zfs create -o compression=lz4 -o canmount=noauto -o mountpoint="${JAIL_DATA}" "${JAIL_ZFS_BASE}"
@@ -266,4 +278,10 @@ printf "\n${DUP_JAIL_NAME} {\n ip4.addr = \"${IP4}\";\n}" >> /etc/jail.conf
 
 [ "${CREATE_TEMPLATE}" -eq "1" ] && create_template
 [ "${UPDATE}" -eq "1" ] && update
-[ "${DUPLICATE}" -eq "1" ] && duplicate
+if [ "${DUPLICATE}" -eq "1" ]; then
+	if [ "${DUP_TYPE}" -eq "0" ]; then 
+		duplicate_thin
+	else
+		duplicate_full
+	fi
+fi
