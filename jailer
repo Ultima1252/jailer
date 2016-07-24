@@ -292,24 +292,25 @@ done
 echo "Update Finished"
 }
 
-duplicate_thin() {
+duplicate() {
 precheck "2"
 mk_dir "${JAIL_DATA}"
-zfs create -o compression=lz4 -o canmount=noauto -o mountpoint="${JAIL_DATA}" "${JAIL_ZFS_BASE}"
-zfs create -o compression=lz4 -o canmount=noauto "${JAIL_ZFS_LOCAL}"
-mount -t zfs "${JAIL_ZFS_BASE}" "${JAIL_DATA}"
-cp -Ra "${SKEL}"/* "${JAIL_DATA}/"
-umount "${JAIL_DATA}"
-printf "${TEMPLATE} ${JAIL_DATA}\tnullfs\tro 0 0\n${JAIL_ZFS_BASE} ${JAIL_DATA}/s\tzfs\trw 0 0\n${JAIL_ZFS_LOCAL} ${JAIL_DATA}/usr/local\tzfs\trw 0 0" > /etc/fstab."${DUP_JAIL_NAME}"
-printf "\n${DUP_JAIL_NAME} {\n ip4.addr = \"${IP4}\";\n}" >> /etc/jail.conf
+if [ "${DUP_TYPE}" -eq "0" ]; then
+	zfs create -o compression=lz4 -o canmount=noauto -o mountpoint="${JAIL_DATA}" "${JAIL_ZFS_BASE}"
+	zfs create -o compression=lz4 -o canmount=noauto "${JAIL_ZFS_LOCAL}"
+	mount -t zfs "${JAIL_ZFS_BASE}" "${JAIL_DATA}"
+	cp -Ra "${SKEL}"/* "${JAIL_DATA}/"
+	umount "${JAIL_DATA}"
+	printf "${TEMPLATE} ${JAIL_DATA}\tnullfs\tro 0 0\n${JAIL_ZFS_BASE} ${JAIL_DATA}/s\tzfs\trw 0 0\n${JAIL_ZFS_LOCAL} ${JAIL_DATA}/usr/local\tzfs\trw 0 0" > /etc/fstab."${DUP_JAIL_NAME}"
+	printf "\n${DUP_JAIL_NAME} {\n ip4.addr = \"${IP4}\";\n}" >> /etc/jail.conf
+else
+	zfs clone -o canmount=noauto "${ZFS_TEMPLATE_FULL}@${TEMPLATE_SNAPSHOT_FULL}" "${JAIL_ZFS_BASE}"
+	zfs create -o canmount=noauto "${JAIL_ZFS_LOCAL}"
+	printf "${JAIL_ZFS_BASE} ${JAIL_DATA}\tzfs\trw 0 0\n${JAIL_ZFS_LOCAL} ${JAIL_DATA}/usr/local\tzfs\trw 0 0" > /etc/fstab."${DUP_JAIL_NAME}"
+	printf "\n${DUP_JAIL_NAME} {\n ip4.addr = \"${IP4}\";\n}" >> /etc/jail.conf
+fi
 }
 
 [ "${CREATE_TEMPLATE}" -eq "1" ] && create_template
 [ "${UPDATE}" -eq "1" ] && update
-if [ "${DUPLICATE}" -eq "1" ]; then
-	if [ "${DUP_TYPE}" -eq "0" ]; then 
-		duplicate_thin
-	else
-		duplicate_full
-	fi
-fi
+[ "${DUPLICATE}" -eq "1" ] && duplicate
