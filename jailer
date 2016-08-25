@@ -31,7 +31,7 @@ JAILER_VERSION="0.0.3"
 usage() {
         cat << EOF
 Usage: jailer [-c default] [-a amd64.amd64]
-       jailer [-d default] [-j webserver] [-n 192.168.1.120/24]
+       jailer [-d default] [-j webserver] [-t full] [-n 192.168.1.120/24]
        jailer [-u default]
 
 Parameters:
@@ -42,10 +42,13 @@ Parameters:
     -v     --  Show version of jailer
 Options:
     -a     --  set TARGET.TARGET_ARCH, default uname -m/-p
+    -j     --  jailname, only used with -d
     -n     --  ipv4 address, only used with -d
     -o     --  set OBJDIR
     -s     --  set SRCDIR
-    -j     --  jailname, only used with -d
+    -t     --  jail type, only used with -d
+               valid types are thin and full/thick
+               default is thin
     -z     --  zpool to use
 
 By default, (no options) jailer does nothing
@@ -56,20 +59,22 @@ EOF
 CREATE_TEMPLATE="0"
 DUPLICATE=0
 TEMPL="0"
-UPDATE=0
+UPDATE="0"
+DUP_TYPE="0"
 
-while getopts "a:c:d:j:n:o:s:u:vz:" FLAG; do
+while getopts "a:c:d:j:n:o:s:t:u:vz:" FLAG; do
 	case "${FLAG}" in
 	a)	TARGET="${OPTARG}" ;;
 	c)	CREATE_TEMPLATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	d)	DUPLICATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
+	j)	TEMPL="1"
+		DUP_JAIL_NAME="${OPTARG}" ;;
 	n)	IP4="$OPTARG" ;;
 	o)	OBJDIR="${OPTARG}" ;;
 	s)	SRCDIR="${OPTARG}" ;;
-	j)	TEMPL="1"
-		DUP_JAIL_NAME="${OPTARG}" ;;
+	t)	DUP_TYPE="${OPTARG}" ;;
 	u)	UPDATE="1"
 		TEMPLATE_NAME="${OPTARG}" ;;
 	v)	echo "${JAILER_VERSION}" && exit 0 ;;
@@ -91,19 +96,29 @@ if [ -n "${TARGET}" ]; then
 	TARGET="`echo ${TARGET} | awk -F. '{print $1}'`"
 fi
 
+case "${DUP_TYPE}" in
+	0|thin) DUP_TYPE="0" ;;
+	full|thick) DUP_TYPE="1" ;;
+	*) echo Invalid -t option && exit 1
+esac
+
 : ${ZPOOL:="zroot"}
 : ${TEMPLATE_NAME:="main"}
 : ${TEMPLATE_DIR:="/usr/jails/template"}
 : ${TEMPLATE_ZFS_DIR:="${ZPOOL}/jails/template"}
 : ${JAIL_DIR:="/usr/jails"}
 : ${JAIL_ZFS_DIR:="${ZPOOL}/jails"}
-: ${TEMPLATE_CURRENT_NAME:="CURRENT"}
+: ${TEMPLATE_SNAPSHOT_THIN:="CURRENT"}
+: ${TEMPLATE_SNAPSHOT_FULL:="CURRENT-FULL"}
 : ${SRCDIR:="/usr/src"}
 : ${OBJDIR:="/usr/obj"}
 : ${DATE:="`date "+%Y-%m-%d_%H.%M.%S"`"}
 
 ZFS_TEMPLATE="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}"
+ZFS_TEMPLATE_FULL="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}-FULL"
+ZFS_TEMPLATE_FULL_OLD="${TEMPLATE_ZFS_DIR}/${TEMPLATE_NAME}-FULL-OLD-${DATE}"
 TEMPLATE="${TEMPLATE_DIR}/${TEMPLATE_NAME}"
+TEMPLATE_FULL="${TEMPLATE_DIR}/${TEMPLATE_NAME}-FULL"
 ZFS_SKEL="${ZFS_TEMPLATE}/s"
 SKEL="${TEMPLATE}/s"
 OLD_SNAPSHOT="old"
@@ -132,6 +147,7 @@ if [ "$1" -lt "2" ]; then
 fi
 if [ "$1" -eq "0" ]; then
 	[ "`echo "${DATASET_LIST}" | grep -com1 "^${ZFS_TEMPLATE}$"`" -eq "1" ] && echo "Template ${TEMPLATE_NAME} already exists" && exit 1
+	[ "`echo "${DATASET_LIST}" | grep -com1 "^${ZFS_TEMPLATE_FULL}$"`" -eq "1" ] && echo "Dataset ${TEMPLATE_NAME_FULL} already exists, and is needed for full jails" && exit 1
 	[ -d "${TEMPLATE}" ] && [ ! "`find "${TEMPLATE}" -type d -empty -maxdepth 1`" ] && echo "Template dir ${TEMPLATE} is not empty" && exit 1
 fi
 if [ "$1" -ge "1" ]; then
@@ -157,6 +173,11 @@ ln -s "$1" "$2"
 chflags -h sunlnk "$2"
 }
 
+rm_link() {
+chflags -h 0 "$1"
+rm "$1"
+}
+
 zfs_snapshot() {
 [ "$3" -eq "1" ] && zfs list "$1@$2" >/dev/null 2>&1 && zfs rename "$1@$2" "$1@${OLD_SNAPSHOT}-${DATE}"
 zfs snapshot "$1@$2"
@@ -179,6 +200,26 @@ mk_link "s/root" "${TEMPLATE}/root"
 ! [ -f "${SKEL}/etc/resolv.conf" ] && [ -f /etc/resolv.conf ] && cp /etc/resolv.conf "${SKEL}/etc/"
 ! [ -f "${SKEL}/etc/rc.conf" ] && printf 'hostname=""\nsendmail_enable="NO"\nsendmail_submit_enable="NO"\nsendmail_outbound_enable="NO"\nsendmail_msp_queue_enable="NO"' > "${SKEL}/etc/rc.conf"
 return 0
+}
+
+create_template_full() {
+local SKEL_FOLDERS="etc media mnt root tmp var"
+zfs clone "${ZFS_TEMPLATE}@${TEMPLATE_SNAPSHOT_THIN}" "${ZFS_TEMPLATE_FULL}"
+rmdir ${TEMPLATE_FULL}/s
+for link in ${SKEL_FOLDERS} home usr/home; do
+	rm_link "${TEMPLATE_FULL}/$link"
+done
+ln -s usr/home ${TEMPLATE_FULL}/home
+mkdir -p ${TEMPLATE_FULL}/usr/home
+for dir in ${SKEL_FOLDERS}; do
+	cp -Ra "${SKEL}/$dir" "${TEMPLATE_FULL}/$dir"
+done
+chmod 1777 "${TEMPLATE_FULL}/tmp"
+zfs set canmount=noauto "${ZFS_TEMPLATE_FULL}"
+zfs set readonly=on "${ZFS_TEMPLATE_FULL}"
+zfs umount "${ZFS_TEMPLATE_FULL}"
+rmdir "${TEMPLATE_FULL}"
+zfs_snapshot "${ZFS_TEMPLATE_FULL}" "${TEMPLATE_SNAPSHOT_FULL}" "0"
 }
 
 create_template() {
@@ -214,16 +255,17 @@ if [ "$?" -eq "1" ]; then
 	exit 1
 fi
 zfs set readonly=on "${ZFS_TEMPLATE}"
-zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "0"
-zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "0"
+zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_SNAPSHOT_THIN}" "0"
+zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_SNAPSHOT_THIN}" "0"
+create_template_full
 echo "${TEMPLATE_NAME} is ready for use."
 }
 
 update() {
+precheck "1"
 TARGET="`chroot "${TEMPLATE}" uname -m`"
 TARGET_ARCH="`chroot "${TEMPLATE}" uname -p`"
 archcheck
-precheck "1"
 zfs set readonly=off "${ZFS_TEMPLATE}"
 install_src
 if [ "$?" -eq "1" ]; then
@@ -233,8 +275,17 @@ if [ "$?" -eq "1" ]; then
 	exit 1
 fi
 zfs set readonly=on "${ZFS_TEMPLATE}"
-zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_CURRENT_NAME}" "1"
-zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_CURRENT_NAME}" "1"
+zfs_snapshot "${ZFS_TEMPLATE}" "${TEMPLATE_SNAPSHOT_THIN}" "1"
+zfs_snapshot "${ZFS_SKEL}" "${TEMPLATE_SNAPSHOT_THIN}" "1"
+zfs list "${ZFS_TEMPLATE_FULL}" >/dev/null 2>&1
+if [ "$?" -eq "0" ]; then
+	if [ "`zfs list -ro origin "${JAIL_ZFS_DIR}" | grep -cm1 "^${ZFS_TEMPLATE_FULL}@.*$"`" -eq "1" ]; then
+		zfs rename -u "${ZFS_TEMPLATE_FULL}" "${ZFS_TEMPLATE_FULL_OLD}"
+	else
+		zfs destroy -r "${ZFS_TEMPLATE_FULL}"
+	fi
+fi
+create_template_full
 
 ### Updating jails that are currently running ###
 : ${JAILS:="`cat /etc/jail.conf | grep -v '${' | sed 's/#.*//' | grep -E ".+{" | sed 's/{//' | sort -u`"}
@@ -256,13 +307,20 @@ echo "Update Finished"
 duplicate() {
 precheck "2"
 mk_dir "${JAIL_DATA}"
-zfs create -o compression=lz4 -o canmount=noauto -o mountpoint="${JAIL_DATA}" "${JAIL_ZFS_BASE}"
-zfs create -o compression=lz4 -o canmount=noauto "${JAIL_ZFS_LOCAL}"
-mount -t zfs "${JAIL_ZFS_BASE}" "${JAIL_DATA}"
-cp -Ra "${SKEL}"/* "${JAIL_DATA}/"
-umount "${JAIL_DATA}"
-printf "${TEMPLATE} ${JAIL_DATA}\tnullfs\tro 0 0\n${JAIL_ZFS_BASE} ${JAIL_DATA}/s\tzfs\trw 0 0\n${JAIL_ZFS_LOCAL} ${JAIL_DATA}/usr/local\tzfs\trw 0 0" > /etc/fstab."${DUP_JAIL_NAME}"
-printf "\n${DUP_JAIL_NAME} {\n ip4.addr = \"${IP4}\";\n}" >> /etc/jail.conf
+if [ "${DUP_TYPE}" -eq "0" ]; then
+	zfs create -o compression=lz4 -o canmount=noauto -o mountpoint="${JAIL_DATA}" "${JAIL_ZFS_BASE}"
+	zfs create -o compression=lz4 -o canmount=noauto "${JAIL_ZFS_LOCAL}"
+	mount -t zfs "${JAIL_ZFS_BASE}" "${JAIL_DATA}"
+	cp -Ra "${SKEL}"/* "${JAIL_DATA}/"
+	umount "${JAIL_DATA}"
+	printf "${TEMPLATE} ${JAIL_DATA}\tnullfs\tro 0 0\n${JAIL_ZFS_BASE} ${JAIL_DATA}/s\tzfs\trw 0 0\n${JAIL_ZFS_LOCAL} ${JAIL_DATA}/usr/local\tzfs\trw 0 0" > /etc/fstab."${DUP_JAIL_NAME}"
+	printf "\n${DUP_JAIL_NAME} {\n ip4.addr = \"${IP4}\";\n}" >> /etc/jail.conf
+else
+	zfs clone -o canmount=noauto "${ZFS_TEMPLATE_FULL}@${TEMPLATE_SNAPSHOT_FULL}" "${JAIL_ZFS_BASE}"
+	zfs create -o canmount=noauto "${JAIL_ZFS_LOCAL}"
+	printf "${JAIL_ZFS_BASE} ${JAIL_DATA}\tzfs\trw 0 0\n${JAIL_ZFS_LOCAL} ${JAIL_DATA}/usr/local\tzfs\trw 0 0" > /etc/fstab."${DUP_JAIL_NAME}"
+	printf "\n${DUP_JAIL_NAME} {\n ip4.addr = \"${IP4}\";\n}" >> /etc/jail.conf
+fi
 }
 
 [ "${CREATE_TEMPLATE}" -eq "1" ] && create_template
