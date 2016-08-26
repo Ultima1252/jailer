@@ -269,7 +269,7 @@ archcheck
 zfs set readonly=off "${ZFS_TEMPLATE}"
 install_src
 if [ "$?" -eq "1" ]; then
-	zfs rollback ${ZFS_TEMPLATE}@${TEMPLATE_CURRENT_NAME}
+	zfs rollback -r "${ZFS_TEMPLATE}@${TEMPLATE_SNAPSHOT_THIN}"
 	zfs set readonly=on "${ZFS_TEMPLATE}"
 	echo "${SRCDIR} Needs to be compiled. Run make buildworld."
 	exit 1
